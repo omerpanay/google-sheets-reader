@@ -1,121 +1,70 @@
-"""
-# Google Sheets Belge Yöneticisi
+## Google Sheets Vector Store App
 
-Kendi Google Service Account credentials'ınızı kullanarak Google Sheets verilerinizi okuyun, işleyin ve yönetin.
+A minimal Streamlit application that:
+1. Accepts Google Service Account credentials (JSON text)
+2. Downloads a single Google Sheets document (all sheets)
+3. Builds text chunks and embeddings (HuggingFace `BAAI/bge-small-en-v1.5`)
+4. Stores them in a local ChromaDB persistent collection
+5. Shows collection statistics
 
-## 🌟 Özellikler
+### ✨ Features
+- One-click end‑to‑end pipeline (data -> embeddings -> vector store -> stats)
+- No OpenAI key required (uses free HuggingFace embeddings)
+- Automatic fallback manual reader if LlamaIndex reader returns zero docs
+- Persistent local vector store under `./chroma_db`
 
-- **Dinamik Credentials**: Kendi Service Account JSON'ınızı kullanın
-- **Tek Spreadsheet İşleme**: Belirli bir spreadsheet'i işleyin
-- **Folder İşleme**: Tüm folder'daki spreadsheet'leri toplu işleyin
-- **Belge Yönetimi**: İşlenmiş belgeleri kaydedin ve yönetin
-- **Gelişmiş Arama**: Belge içeriğinde detaylı arama
-- **İçerik Analizi**: Kelime frekansı ve istatistikler
-
-## 🚀 Hızlı Başlangıç
-
-### 1. Kurulum
+### 🚀 Quick Start
 ```bash
-# Repository'yi klonlayın
-git clone <repo-url>
-cd google-sheets-document-manager
-
-# Sanal ortam oluşturun
+git clone <your-repo-url>
+cd google_sheets
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# veya
-venv\Scripts\activate  # Windows
-
-# Bağımlılıkları yükleyin
+venv\\Scripts\\activate  # Windows
+# or: source venv/bin/activate  (Linux/Mac)
 pip install -r requirements.txt
-```
-
-### 2. Google Service Account Kurulumu
-
-1. **Google Cloud Console'a gidin**: https://console.cloud.google.com
-2. **Proje oluşturun** veya mevcut projeyi seçin
-3. **API'leri etkinleştirin**:
-   - Google Sheets API
-   - Google Drive API
-4. **Service Account oluşturun**:
-   - IAM & Admin > Service Accounts
-   - "Create Service Account" tıklayın
-   - Gerekli bilgileri girin
-5. **JSON Key indirin**:
-   - Service Account'a tıklayın
-   - Keys > Add Key > Create new key > JSON
-   - Dosyayı indirin ve içeriğini kopyalayın
-6. **Spreadsheet'leri paylaşın**:
-   - Service Account email'ini kopyalayın
-   - Spreadsheet'lerinizi bu email ile paylaşın (Viewer yeterli)
-
-### 3. Uygulamayı Çalıştırın
-```bash
 streamlit run main.py
 ```
 
-## 📁 Proje Yapısı
+### 🔐 Create Service Account
+1. Open Google Cloud Console → APIs & Services → Credentials
+2. Enable Google Sheets API (and Drive API if needed)
+3. Create Service Account → create key (JSON) → download
+4. Share your target Sheet with the service account email (Viewer)
+5. Open the JSON file and paste its contents in the app
 
+### ▶️ Usage
+1. Paste credentials JSON
+2. Enter the Sheet ID (from the URL `.../spreadsheets/d/<ID>/edit`)
+3. Click "Start Process" – wait for success + stats
+
+### � Current Project Structure
 ```
-├── main.py                           # Ana uygulama
+├── main.py                       # Streamlit UI + orchestration
+├── downloader.py                 # Direct Google Sheets API downloader
+├── google_sheets_embedding_method.py  # Document + fallback builder
+├── vector_store_manager.py       # ChromaDB + embedding index
 ├── shared/
-│   ├── config.py                    # Yapılandırma ve geçici dosya yönetimi
-│   └── protocol.py                  # Base sınıflar ve veri modelleri
-├── core/
-│   ├── document_processor.py        # Belge işleme ve chunking
-│   ├── document_manager.py          # Belge kaydetme/yükleme
-│   └── credentials_manager.py       # Credentials doğrulama
-├── readers/
-│   └── dynamic_google_sheets_reader.py  # Dinamik Google Sheets okuyucu
-├── interface/
-│   └── enhanced_streamlit_app.py    # Gelişmiş Streamlit arayüzü
-├── documents/                       # İşlenmiş belge içerikleri
-├── metadata/                        # Belge metadata'ları
-├── temp_credentials/                # Geçici credentials dosyaları
-└── requirements.txt                 # Python bağımlılıkları
+│   └── config.py                 # Environment setup
+├── chroma_db/                    # Persistent Chroma storage
+├── requirements.txt
+└── README.md
 ```
 
-## 🎯 Kullanım
+### 🧠 Embedding / Chunking
+- Chunk size: 1024 characters (SentenceSplitter)
+- Overlap: 50 characters
+- Model: `BAAI/bge-small-en-v1.5`
 
-### Credentials Girişi
-1. Uygulamayı açın
-2. Service Account JSON içeriğini yapıştırın
-3. (Opsiyonel) Google Drive Folder ID'sini girin
-4. "Test Et" ile doğrulayın
-5. "Kaydet ve Devam Et" ile uygulamayı başlatın
+### 🗃️ Vector Store
+- Backend: ChromaDB (persistent)
+- Collection name pattern: `sheets_<sheet_id_prefix>`
 
-### Tek Spreadsheet İşleme
-1. Sidebar'dan Spreadsheet ID veya URL'sini girin
-2. "Bilgi Al" ile detayları görün
-3. "İşle & Kaydet" ile belgeleri işleyin
+### 🛠 Extending
+- Add a query interface with similarity search
+- Support multiple Sheets / batch mode
+- Add deletion or re-index buttons
 
-### Folder İşleme
-1. Setup sırasında Folder ID girdiyseniz folder sekmesi aktif olur
-2. Folder'daki tüm spreadsheet'leri görüntüleyin
-3. Seçili olanları veya tümünü işleyin
+### 📄 License
+MIT (add a LICENSE file if distributing publicly).
 
-### Arama ve Analiz
-1. "Arama" sekmesinden belge içeriğinde arama yapın
-2. "Belgeler" sekmesinden kayıtlı belgeleri görüntüleyin
-3. Belge detaylarında içerik analizi yapın
-
-## 🔧 Teknik Detaylar
-
-- **Chunk Boyutu**: 1024 karakter (özelleştirilebilir)
-- **Chunk Overlap**: 100 karakter
-- **Desteklenen Formatlar**: Google Sheets
-- **Depolama**: Yerel dosya sistemi (JSON + TXT)
-- **Güvenlik**: Geçici credentials otomatik temizlenir
-
-## 🤝 Katkıda Bulunma
-
-1. Fork yapın
-2. Feature branch oluşturun (`git checkout -b feature/AmazingFeature`)
-3. Commit yapın (`git commit -m 'Add some AmazingFeature'`)
-4. Push yapın (`git push origin feature/AmazingFeature`)
-5. Pull Request açın
-
-## 📄 Lisans
-
-Bu proje MIT lisansı altında lisanslanmıştır.
-"""
+---
+Feel free to open issues or suggest improvements.
