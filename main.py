@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 from downloader import GoogleSheetsDownloader
-from google_sheets_embedding_method import GoogleSheetsEmbeddingMethod
+from google_sheets_embedding_method import GoogleSheetsEmbeddingMethod, credentials_context
 from vector_store_manager import GoogleSheetsVectorStore
 from shared.config import setup_environment
 import os
@@ -67,11 +67,19 @@ def main():
             # 2. EMBEDDING & VECTOR STORE
             with st.spinner("🤖 Generating embeddings and saving to vector store..."):
                 try:
+                    # Build config dict
+                    config = {
+                        "service_account_dict": credentials_data,
+                        "spreadsheet_id": spreadsheet_id,
+                        "inclusion_rules": [],
+                        "exclusion_rules": [],
+                    }
                     embedding_method = GoogleSheetsEmbeddingMethod(
-                        credentials_json=credentials_text,
-                        spreadsheet_id=spreadsheet_id
+                        data_source_id="google_sheets",
+                        config=config
                     )
-                    documents = embedding_method.get_documents("google_sheets")
+                    with credentials_context(config):
+                        documents = embedding_method.get_documents()
                     if not documents:
                         st.error("❌ No documents found, embedding skipped.")
                         return

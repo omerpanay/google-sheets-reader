@@ -1,18 +1,92 @@
-from typing import Sequence, List
+from typing import Sequence, List, Dict, Any, Optional
 from llama_index.core.schema import Document, BaseNode
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.readers.google import GoogleSheetsReader
 import json
-import tempfile
 import os
+import tempfile
+from contextlib import contextmanager
+
+
+class InvalidDataSourceConfigException(Exception):
+    pass
+
+@contextmanager
+def credentials_context(config: Dict[str, Any]):
+    """Context manager to prepare temporary credentials environment.
+    Steps:
+      1. Save current working directory
+      2. Create a temporary directory
+      3. Chdir into it
+      4. Write credentials JSON (service_account_dict) to token.json
+      5. Set GOOGLE_APPLICATION_CREDENTIALS
+      6. Yield (path to token)
+      7. Revert cwd and cleanup env var automatically
+    """
+    original_cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.chdir(tmpdir)
+        token_path = os.path.join(tmpdir, "token.json")
+        service_account_dict = config.get("service_account_dict", {})
+        with open(token_path, "w", encoding="utf-8") as f:
+            json.dump(service_account_dict, f)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = token_path
+        try:
+            yield token_path
+        finally:
+            # Clean environment
+            if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") == token_path:
+                del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+            os.chdir(original_cwd)
+
 
 class GoogleSheetsEmbeddingMethod:
-    """Embedding method for Google Sheets - Simplified version"""
+    """Embedding method for Google Sheets using a config dict.
 
-    def __init__(self, credentials_json: str, spreadsheet_id: str):
-        self.credentials_json = credentials_json
-        self.spreadsheet_id = spreadsheet_id
+    Expected config keys:
+      - service_account_dict: Dict with Google service account fields
+      - spreadsheet_id: ID of the target Google Sheet
+      - inclusion_rules: Optional[List[str]]
+      - exclusion_rules: Optional[List[str]]
+    """
+
+    def __init__(self, data_source_id: str, config: Dict[str, Any]):
+        self.validate_config(config)
+        self.data_source_id = data_source_id
+        self.config: Dict[str, Any] = config
+        self.key = "spreadsheet_id"
+        self.spreadsheet_id: str = config["spreadsheet_id"]
+        self.inclusion_rules: List[str] = config.get("inclusion_rules", [])
+        self.exclusion_rules: List[str] = config.get("exclusion_rules", [])
+
+    def validate_config(self, config: Dict[str, Any]):
+        required_keys = ["service_account_dict", "spreadsheet_id"]
+        for k in required_keys:
+            if k not in config:
+                raise InvalidDataSourceConfigException(
+                    f"GoogleSheetsEmbeddingMethod requires '{k}' in config."
+                )
+        # Validate service account fields
+        required_service_account_keys = [
+            "type",
+            "project_id",
+            "private_key_id",
+            "private_key",
+            "client_email",
+            "client_id",
+            "auth_uri",
+            "token_uri",
+            "auth_provider_x509_cert_url",
+            "client_x509_cert_url",
+            "universe_domain",
+        ]
+        sad = config.get("service_account_dict", {})
+        for k in required_service_account_keys:
+            if k not in sad:
+                raise InvalidDataSourceConfigException(
+                    f"GoogleSheetsEmbeddingMethod requires '{k}' in 'service_account_dict'."
+                )
 
     def customize_metadata(self, document: Document, data_source_id: str, **kwargs) -> Document:
         document.metadata.update({
@@ -59,52 +133,31 @@ class GoogleSheetsEmbeddingMethod:
         
         return filtered_docs
 
-    def get_documents(self, data_source_id: str = "google_sheets") -> Sequence[Document]:
-        """Get documents from Google Sheets"""
+    def get_documents(self) -> Sequence[Document]:
+        """Get documents from Google Sheets (assumes credentials_context active)."""
         try:
-            print(f"🔍 Debug: Starting document loading from sheet ID: {self.spreadsheet_id}")
-
-            # 1) Credentials JSON'u doğrula
-            credentials_data = json.loads(self.credentials_json)
-            print("🔍 Debug: Credentials JSON parsed")
-
-            # 2) Geçici dosya oluştur & env var ayarla
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
-                json.dump(credentials_data, tmp_file)
-                tmp_file_path = tmp_file.name
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tmp_file_path
-            print(f"🔍 Debug: GOOGLE_APPLICATION_CREDENTIALS set -> {tmp_file_path}")
-
+            print(f"🔍 Debug: Loading sheet: {self.spreadsheet_id}")
             documents: Sequence[Document] = []
             try:
-                # 3) Parametresiz reader (yeni LlamaIndex sürümlerinde env'den okur)
                 reader = GoogleSheetsReader()
-                print("🔍 Debug: GoogleSheetsReader instantiated (no args)")
                 documents = reader.load_data(spreadsheet_id=self.spreadsheet_id)
-                print(f"🔍 Debug: Reader returned {len(documents)} document(s)")
-            except TypeError as te:
-                # Olur da farklı bir signature varsa bilgi ver
-                print(f"⚠️ Debug: TypeError on GoogleSheetsReader usage: {te}")
+                print(f"🔍 Debug: Reader returned {len(documents)} doc(s)")
             except Exception as re:
-                print(f"⚠️ Debug: Reader load exception: {re}")
-            finally:
-                # Geçici dosyayı hemen silme; bazı client'lar lazy okuyabilir, aşağıda silinecek
-                pass
+                print(f"⚠️ Debug: Primary reader exception: {re}")
 
-            # 4) Fallback: Eğer hala döküman yoksa manuel indir & Document oluştur
+            # Fallback
             if not documents:
-                print("⚠️ Debug: Fallback -> manual download via GoogleSheetsDownloader")
+                print("⚠️ Debug: Fallback manual download")
                 try:
                     from downloader import GoogleSheetsDownloader
-                    manual_downloader = GoogleSheetsDownloader(tmp_file_path)
-                    info = manual_downloader.get_spreadsheet_info(self.spreadsheet_id)
+                    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+                    manual_downloader = GoogleSheetsDownloader(cred_path)
                     all_data = manual_downloader.download_all_sheets(self.spreadsheet_id)
                     from llama_index.core.schema import Document as LlamaDocument
                     built_docs: List[Document] = []
                     for sheet_name, rows in all_data.items():
                         if not rows:
                             continue
-                        # Birinci satır header ise atla; metni satırları birleştirerek oluştur
                         text_rows = rows[1:] if len(rows) > 1 else rows
                         joined = "\n".join([", ".join(r) for r in text_rows])
                         built_docs.append(LlamaDocument(
@@ -117,25 +170,18 @@ class GoogleSheetsEmbeddingMethod:
                             }
                         ))
                     documents = built_docs
-                    print(f"🔍 Debug: Fallback built {len(documents)} document(s)")
+                    print(f"🔍 Debug: Fallback built {len(documents)} doc(s)")
                 except Exception as fe:
                     print(f"❌ Fallback failed: {fe}")
 
-            # 5) Metadata zenginleştirme
+            # Apply metadata
             for document in documents:
                 self.customize_metadata(
                     document,
-                    data_source_id,
+                    self.data_source_id,
                     spreadsheet_id=self.spreadsheet_id
                 )
-            print("🔍 Debug: Metadata customization done")
-
             return documents
-
-        except json.JSONDecodeError as je:
-            print(f"❌ Credentials JSON decode error: {je}")
-            return []
-                
         except Exception as e:
             print(f"❌ Error loading from Google Sheets: {e}")
             return []
